@@ -15,12 +15,16 @@ import {
   simulateDiscordTrigger,
   getTelegramTriggerStatus,
   simulateTelegramTrigger,
+  getAgentMailTriggerStatus,
+  simulateAgentMailTrigger,
 } from "@/lib/api";
 import { ToolConfigModal } from "@/components/ToolConfigModal";
 import { AddToolModal } from "@/components/AddToolModal";
+import { MCPServerModal } from "@/components/MCPServerModal";
 import { WorkflowChatSidebar } from "@/components/WorkflowChatSidebar";
 import { OtterLogo } from "@/components/OtterLogo";
 import { WorkflowActiveToggle } from "@/components/WorkflowActiveToggle";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import {
   ArrowLeft,
   Play,
@@ -32,6 +36,8 @@ import {
   MessageSquare,
   Globe,
   Terminal,
+  Server,
+  Wrench,
   Settings2,
   Copy,
   Check,
@@ -48,6 +54,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   ChevronRight,
+  ChevronDown,
   Info,
   AlertCircle,
   Coins,
@@ -60,7 +67,31 @@ import {
   EyeOff,
   Key,
   X,
+  User,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Maximize2,
+  Share2,
+  Megaphone,
+  Kanban,
+  Table,
+  CheckSquare,
+  Clock,
+  ListTodo,
 } from "lucide-react";
+
+function getToolDocsSlug(toolId: string): string {
+  const map: Record<string, string> = {
+    notion_page: "notion",
+    discord_webhook: "discord",
+    http_request: "node_http_request",
+    resend: "resend_email",
+    jina: "jina_reader",
+    forty_two_min: "42min",
+    seven_todos: "7todos",
+  };
+  return map[toolId] || toolId;
+}
 
 interface AgentStudioProps {
   initialDocId?: string;
@@ -87,6 +118,10 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
     openToolConfig,
     toggleToolStatus,
     removeToolFromAgent,
+    openAddMcpModal,
+    openEditMcpModal,
+    toggleMcpServer,
+    removeMcpServer,
     selectModel,
     selectStorage,
     createAgent,
@@ -120,19 +155,33 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
     isLoadingExecutions,
     loadStoredExecutions,
     clearStoredExecutions,
+    chatMessages,
+    sendWorkflowChatMessage,
+    clearChatMessages,
   } = useAgentStore();
 
   const [copiedEndpoint, setCopiedEndpoint] = useState(false);
   const [copiedDiscordUrl, setCopiedDiscordUrl] = useState(false);
   const [copiedTelegramUrl, setCopiedTelegramUrl] = useState(false);
+  const [copiedAgentMailUrl, setCopiedAgentMailUrl] = useState(false);
+  const [isSimulatingEmail, setIsSimulatingEmail] = useState(false);
   const [copiedPublicChat, setCopiedPublicChat] = useState(false);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedApiKey, setCopiedApiKey] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showCurlModal, setShowCurlModal] = useState(false);
+  const [copiedEmbed, setCopiedEmbed] = useState(false);
+  const [copiedCurl, setCopiedCurl] = useState(false);
   const [isRegeneratingKey, setIsRegeneratingKey] = useState(false);
   const [confirmClearExecutions, setConfirmClearExecutions] = useState(false);
   const [isClearingExecutions, setIsClearingExecutions] = useState(false);
+  
+  // Split-pane & Contextual Inspector State
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
+  const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
+  const [activeRightTab, setActiveRightTab] = useState<"config" | "chat" | "storage" | "logs">("config");
+  const [testChatInput, setTestChatInput] = useState("");
+
   const [activeTab, setActiveTab] = useState<ComponentStage | "logs" | "storage">("agent");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState("");
@@ -261,6 +310,55 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
     }
   };
 
+  const [agentmailActive, setAgentmailActive] = useState(false);
+  const [agentmailSimulateLoading, setAgentmailSimulateLoading] = useState(false);
+  const [agentmailStatusMsg, setAgentmailStatusMsg] = useState<string | null>(null);
+  const [agentmailSimulateSender, setAgentmailSimulateSender] = useState("sarah.chen@enterprise.io");
+  const [agentmailSimulateSubject, setAgentmailSimulateSubject] = useState("Enterprise SLA and billing inquiry");
+  const [agentmailSimulateBody, setAgentmailSimulateBody] = useState("Hi team, could you please verify our SLA response guarantee and send over current incident logs?");
+
+  useEffect(() => {
+    if (!activeDoc || activeDoc.trigger.type !== "agentmail") return;
+    let isMounted = true;
+    getAgentMailTriggerStatus(activeDoc.id, backendUrl)
+      .then((res) => {
+        if (isMounted) setAgentmailActive(Boolean(res?.is_active));
+      })
+      .catch(() => {
+        if (isMounted) setAgentmailActive(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [activeDoc?.id, activeDoc?.trigger?.type, activeDoc?.status, backendUrl]);
+
+  const handleSimulateAgentMail = async () => {
+    if (!activeDoc) return;
+    setAgentmailSimulateLoading(true);
+    setAgentmailStatusMsg(null);
+    try {
+      const sender = agentmailSimulateSender.trim() || "sarah.chen@enterprise.io";
+      const subject = agentmailSimulateSubject.trim() || "Enterprise SLA Inquiry";
+      const body = agentmailSimulateBody.trim() || "Hi team, please check our current tier.";
+      const res = await simulateAgentMailTrigger(
+        activeDoc.id,
+        sender,
+        subject,
+        body,
+        backendUrl,
+      );
+      setAgentmailStatusMsg(`✔ Inbound email processed! Agent replied: "${(res.agent_response || '').substring(0, 90)}..."`);
+      await executeOnBackend(
+        activeDoc.id,
+        `Inbound Email from ${sender}\nSubject: ${subject}\n\n${body}`,
+      );
+    } catch (err: any) {
+      setAgentmailStatusMsg(`Simulation error: ${err.message || String(err)}`);
+    } finally {
+      setAgentmailSimulateLoading(false);
+    }
+  };
+
   useEffect(() => {
     setTitleInput(activeDoc.name);
   }, [activeDoc.id, activeDoc.name]);
@@ -274,6 +372,7 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
   const handleSelectComponent = (comp: ComponentStage) => {
     setSelectedComponent(comp);
     setActiveTab(comp);
+    setActiveRightTab("config");
   };
 
   // Automatically load deployment details from PostgreSQL when workflow is active
@@ -316,6 +415,27 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
       navigator.clipboard.writeText(publicChatFullUrl);
       setCopiedPublicChat(true);
       setTimeout(() => setCopiedPublicChat(false), 2000);
+    }
+  };
+
+  const handleCopyEmbed = () => {
+    if (typeof navigator !== "undefined" && publicChatFullUrl) {
+      const embedCode = `<iframe src="${publicChatFullUrl}" width="100%" height="650" frameborder="0" style="border-radius:12px;border:1px solid #1e293b;"></iframe>`;
+      navigator.clipboard.writeText(embedCode);
+      setCopiedEmbed(true);
+      setTimeout(() => setCopiedEmbed(false), 2000);
+    }
+  };
+
+  const handleCopyCurlCommand = () => {
+    if (typeof navigator !== "undefined" && webhookFullUrl) {
+      const curlCmd = `curl -X POST "${webhookFullUrl}" \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${deploymentInfo?.api_key || activeDoc.trigger.webhookSecret || "YOUR_SECRET_KEY"}" \\
+  -d '${JSON.stringify(activeDoc.trigger.samplePayload || { message: "Hello agent" })}'`;
+      navigator.clipboard.writeText(curlCmd);
+      setCopiedCurl(true);
+      setTimeout(() => setCopiedCurl(false), 2000);
     }
   };
 
@@ -379,6 +499,22 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
         return <Search className="w-4 h-4 text-sky-400" />;
       case "MessageSquare":
         return <MessageSquare className="w-4 h-4 text-indigo-400" />;
+      case "Megaphone":
+        return <Megaphone className="w-4 h-4 text-fuchsia-400" />;
+      case "Kanban":
+        return <Kanban className="w-4 h-4 text-blue-400" />;
+      case "Table":
+        return <Table className="w-4 h-4 text-teal-400" />;
+      case "Send":
+        return <Send className="w-4 h-4 text-emerald-400" />;
+      case "CheckSquare":
+        return <CheckSquare className="w-4 h-4 text-violet-400" />;
+      case "Bot":
+        return <Bot className="w-4 h-4 text-orange-400" />;
+      case "Clock":
+        return <Clock className="w-4 h-4 text-yellow-400" />;
+      case "ListTodo":
+        return <ListTodo className="w-4 h-4 text-lime-400" />;
       default:
         return <Sparkles className="w-4 h-4 text-cyan-400" />;
     }
@@ -407,9 +543,10 @@ export function AgentStudio({ initialDocId }: AgentStudioProps) {
 
   return (
     <div className="min-h-screen bg-[#080c14] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/20 selection:text-cyan-300">
-      {/* Tool Configuration Modal & Add Tool Modal */}
+      {/* Tool Configuration Modal, Add Tool Modal & MCP Server Modal */}
       <ToolConfigModal />
       <AddToolModal />
+      <MCPServerModal />
       <WorkflowChatSidebar />
 
       {/* Webhook cURL & Code Integration Modal */}
@@ -557,12 +694,14 @@ print(response.json())`}</pre>
         </div>
       )}
 
-      {/* 1. Studio Top Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-40">
-        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+      {/* 1. Studio Top Navigation Bar (Unified Sleek Single-Tier Header) */}
+      <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md px-3 sm:px-5 py-2.5 flex items-center justify-between sticky top-0 z-40 gap-3">
+        {/* Left Side: Brand, Breadcrumbs, Editable Name & Status */}
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <Link
             href="/"
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 transition-colors shrink-0"
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-800 transition-colors shrink-0"
+            title="Back to Landing"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Landing</span>
@@ -570,7 +709,7 @@ print(response.json())`}</pre>
 
           <div className="h-4 w-px bg-slate-800 shrink-0" />
 
-          <Link href="/" className="shrink-0">
+          <Link href="/" className="shrink-0 flex items-center">
             <OtterLogo
               size={22}
               textClassName="text-sm font-bold tracking-tight text-white hidden md:inline"
@@ -579,8 +718,16 @@ print(response.json())`}</pre>
 
           <div className="h-4 w-px bg-slate-800 shrink-0 hidden md:block" />
 
-          {/* Editable Agent Document Title */}
-          <div className="flex items-center gap-2 min-w-0">
+          {/* Breadcrumb & Editable Agent Title */}
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 text-xs sm:text-sm">
+            <Link
+              href="/dashboard"
+              className="text-slate-400 hover:text-slate-200 transition-colors font-medium shrink-0 hidden sm:inline"
+            >
+              Dashboard
+            </Link>
+            <span className="text-slate-600 hidden sm:inline">/</span>
+
             {isEditingTitle ? (
               <input
                 type="text"
@@ -589,26 +736,26 @@ print(response.json())`}</pre>
                 onBlur={handleTitleSubmit}
                 onKeyDown={(e) => e.key === "Enter" && handleTitleSubmit()}
                 autoFocus
-                className="bg-slate-900 border border-cyan-500/50 rounded-lg px-2.5 py-1 text-xs sm:text-sm font-semibold text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 min-w-[200px]"
+                className="bg-slate-900 border border-cyan-500/60 rounded-lg px-2 py-0.5 text-xs sm:text-sm font-semibold text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 min-w-[160px] sm:min-w-[220px]"
               />
             ) : (
               <button
                 onClick={() => setIsEditingTitle(true)}
-                className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-white hover:text-cyan-300 transition-colors truncate text-left"
-                title="Click to rename agent"
+                className="flex items-center gap-1.5 font-bold text-white hover:text-cyan-300 transition-colors truncate text-left group cursor-pointer"
+                title="Click to rename workflow"
               >
-                <span className="truncate max-w-55 sm:max-w-md">
+                <span className="truncate max-w-[140px] sm:max-w-xs md:max-w-md">
                   {activeDoc.name}
                 </span>
-                <span className="text-[10px] text-slate-500 font-normal">
+                <span className="text-[10px] text-slate-500 group-hover:text-cyan-400 transition-colors font-normal">
                   ✎
                 </span>
               </button>
             )}
 
-            {/* Status Badge */}
+            {/* Status Pill */}
             <span
-              className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${
+              className={`text-[10px] sm:text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border shrink-0 ${
                 activeDoc.status === "active"
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                   : "bg-slate-800/80 text-slate-400 border-slate-750"
@@ -619,14 +766,14 @@ print(response.json())`}</pre>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
+        {/* Right Side: Fast Actions (Backend, Save, Pipeline Toggle, Deploy & Share, Test Chat) */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           {/* Backend Connection Status Badge */}
           <button
             type="button"
             onClick={() => checkBackendStatus()}
             title="Click to check FastAPI backend connectivity (http://localhost:8000)"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono border transition-all cursor-pointer ${
+            className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono border transition-all cursor-pointer ${
               backendStatus === "connected"
                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
                 : backendStatus === "checking"
@@ -635,7 +782,7 @@ print(response.json())`}</pre>
             }`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-1.5 h-1.5 rounded-full ${
                 backendStatus === "connected"
                   ? "bg-emerald-400 shadow-[0_0_8px_#34d399]"
                   : backendStatus === "checking"
@@ -648,7 +795,7 @@ print(response.json())`}</pre>
                 ? "FastAPI :8000"
                 : backendStatus === "checking"
                   ? "Checking..."
-                  : "Backend Offline"}
+                  : "Offline"}
             </span>
           </button>
 
@@ -656,7 +803,7 @@ print(response.json())`}</pre>
           <button
             onClick={() => saveWorkflowToBackend(activeDoc.id)}
             disabled={isSaving}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
               hasUnsavedChanges
                 ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
                 : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-800"
@@ -670,43 +817,60 @@ print(response.json())`}</pre>
             {isSaving ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
-                <span>Saving...</span>
+                <span className="hidden sm:inline">Saving...</span>
               </>
             ) : hasUnsavedChanges ? (
               <>
                 <Save className="w-3.5 h-3.5 text-amber-400" />
-                <span className="font-semibold text-amber-300">Save to DB</span>
+                <span className="font-semibold text-amber-300">Save</span>
               </>
             ) : (
               <>
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Saved</span>
+                <span className="hidden sm:inline">Saved</span>
               </>
             )}
           </button>
 
-          {/* Active Workflow Toggle (n8n-style, compiles graph) */}
+          {/* Active Workflow Toggle (Compiles graph on live status) */}
           <WorkflowActiveToggle size="md" />
 
-          {/* Test Execution Button */}
-          {activeDoc.status === "active" && (
-            <button
-              onClick={() => openChatSidebar(customPrompt.trim() || undefined)}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer bg-linear-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 shadow-emerald-500/20"
-            >
-              {isRunning ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Executing...</span>
-                </>
-              ) : (
-                <>
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Run Agent</span>
-                </>
-              )}
-            </button>
-          )}
+          {/* Left Pane Collapse / Expand Toggle */}
+          <button
+            onClick={() => setIsLeftCollapsed(!isLeftCollapsed)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
+            title={isLeftCollapsed ? "Expand pipeline pane" : "Collapse pipeline pane"}
+          >
+            {isLeftCollapsed ? (
+              <PanelLeftOpen className="w-3.5 h-3.5 text-cyan-400" />
+            ) : (
+              <PanelLeftClose className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span className="hidden lg:inline">{isLeftCollapsed ? "Show Flow" : "Collapse"}</span>
+          </button>
+
+          {/* Deploy & Share Modal Trigger Button */}
+          <button
+            onClick={() => setIsDeployModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-linear-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 border border-cyan-500/30 hover:border-cyan-500/50 hover:bg-cyan-500/30 transition-all cursor-pointer shadow-xs"
+            title="Open Deployment & Sharing Details"
+          >
+            <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Deploy & Share</span>
+            {activeDoc.status === "active" && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+            )}
+          </button>
+
+          {/* Test Agent Quick Launch */}
+          <button
+            onClick={() => setActiveRightTab("chat")}
+            className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer bg-linear-to-r from-emerald-400 to-teal-400 text-slate-950 hover:brightness-110 shadow-emerald-500/20"
+            title="Open Interactive Test Chat"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Test Agent</span>
+          </button>
         </div>
       </header>
 
@@ -714,198 +878,11 @@ print(response.json())`}</pre>
       {isLoadingWorkflow && (
         <div className="bg-cyan-950/60 border-b border-cyan-800/40 px-4 py-1.5 flex items-center justify-center gap-2 text-xs text-cyan-300 animate-pulse">
           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-          <span>
-            Synchronizing workflow configurations with PostgreSQL database...
-          </span>
+          <span>Synchronizing workflow configurations with PostgreSQL database...</span>
         </div>
       )}
 
-      {/* 🚀 Active Deployment Action & End-User Access Bar */}
-      {activeDoc.status === "active" && (
-        <div className="bg-[#070b16] border-b border-slate-800/80 px-4 sm:px-6 py-2.5">
-          {activeDoc.trigger.type === "chat" ? (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5 min-w-0 flex-wrap sm:flex-nowrap">
-                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold text-[11px] shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  Chat Deployed & Live
-                </span>
-                <span className="text-slate-400 shrink-0 font-medium">Public End-User Link:</span>
-                <code className="text-emerald-300 font-mono text-xs truncate bg-black/50 px-2.5 py-1 rounded-lg border border-emerald-500/20 max-w-xs sm:max-w-md select-all">
-                  {publicChatFullUrl}
-                </code>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleCopyPublicChat}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-300 text-xs font-medium transition-colors cursor-pointer"
-                >
-                  {copiedPublicChat ? (
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                  <span>{copiedPublicChat ? "Link Copied" : "Copy Link"}</span>
-                </button>
-                <a
-                  href={`/chat/${activeDoc.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 font-bold text-xs hover:brightness-110 transition-all shadow-sm shadow-emerald-500/20"
-                >
-                  <span>Open End-User Chat</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              </div>
-            </div>
-          ) : activeDoc.trigger.type === "webhook" ? (
-            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-semibold text-[11px] shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                  Webhook Deployed
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 font-mono text-[10px] font-bold border border-cyan-500/30">
-                  POST
-                </span>
-                <code className="text-cyan-300 font-mono text-xs truncate bg-black/50 px-2.5 py-1 rounded-lg border border-cyan-500/20 max-w-[220px] sm:max-w-sm select-all">
-                  {webhookFullUrl}
-                </code>
-                <button
-                  type="button"
-                  onClick={handleCopyWebhookUrl}
-                  title="Copy Webhook Endpoint URL"
-                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-
-                {(deploymentInfo?.api_key || activeDoc.trigger.webhookSecret) && (
-                  <div className="flex items-center gap-1.5 ml-1 sm:ml-2">
-                    <span className="text-slate-400 font-mono text-[11px] flex items-center gap-1">
-                      <Key className="w-3 h-3 text-amber-400" />
-                      Key:
-                    </span>
-                    <code className="text-amber-300 font-mono text-xs bg-black/50 px-2 py-0.5 rounded-lg border border-amber-500/30">
-                      {showApiKey
-                        ? (deploymentInfo?.api_key || activeDoc.trigger.webhookSecret)
-                        : `${(deploymentInfo?.api_key || activeDoc.trigger.webhookSecret || "").slice(0, 14)}••••••`}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      title={showApiKey ? "Hide key" : "Show key"}
-                      className="p-1 text-slate-400 hover:text-white"
-                    >
-                      {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyApiKey}
-                      title="Copy Secret API Key"
-                      className="p-1 text-slate-400 hover:text-white"
-                    >
-                      {copiedApiKey ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowCurlModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 text-xs font-medium transition-colors cursor-pointer"
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  <span>cURL & Code Snippet</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRegenerateKey}
-                  disabled={isRegeneratingKey}
-                  title="Regenerate Secret API Key"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white text-xs transition-colors cursor-pointer"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isRegeneratingKey ? "animate-spin text-cyan-400" : ""}`} />
-                  <span className="hidden sm:inline">Regenerate Key</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 font-semibold text-[11px] shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-                  {activeDoc.trigger.type === "telegram" ? "Telegram Bot Active" : "Discord Bot Active"}
-                </span>
-                <span className="text-slate-300 truncate text-xs">
-                  {activeDoc.trigger.type === "telegram"
-                    ? "Inbound Telegram updates listener active via FastAPI webhook"
-                    : "Discord Interaction listener active on /ask slash command"}
-                </span>
-              </div>
-              {activeDoc.trigger.type === "telegram" && activeDoc.trigger.telegramSettings?.botUsername && (
-                <a
-                  href={`https://t.me/${activeDoc.trigger.telegramSettings.botUsername.replace(/^@/, "")}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500 text-slate-950 font-bold text-xs hover:brightness-110 transition-all shrink-0"
-                >
-                  <span>Open Bot in Telegram</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Trigger Prompt & Execution Query Bar */}
-      {activeDoc.status === "active" && (
-        <div className="bg-slate-950/80 border-b border-slate-800/80 px-4 sm:px-6 py-2.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
-          <div className="flex-1 flex items-center gap-2 min-w-0">
-            <span className="text-slate-400 font-mono shrink-0">
-              Test Input:
-            </span>
-            <input
-              type="text"
-              placeholder={
-                activeDoc.trigger.samplePayload?.message ||
-                "Type query for the agent (e.g. What product categories are available?)..."
-              }
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  openChatSidebar(customPrompt.trim() || undefined);
-                  setCustomPrompt("");
-                }
-              }}
-              className="flex-1 bg-slate-900 border border-slate-800 focus:border-cyan-500 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none placeholder:text-slate-600"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() =>
-                setCustomPrompt(
-                  "What product categories are available? Fetch them.",
-                )
-              }
-              className="px-2 py-1 rounded text-[11px] bg-slate-900 border border-slate-800 text-slate-400 hover:text-cyan-300 font-mono transition-colors cursor-pointer"
-            >
-              Categories Query
-            </button>
-            <div className="text-[11px] font-mono text-emerald-400">
-              Channel: {activeDoc.output.type}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Backend Error Banner */}
       {backendError && (
         <div className="px-4 sm:px-6 py-2 bg-rose-950/40 border-b border-rose-900/50 flex items-center justify-between text-xs text-rose-300">
           <div className="flex items-center gap-2">
@@ -922,352 +899,833 @@ print(response.json())`}</pre>
         </div>
       )}
 
-      {/* 3. Main Workspace: The 3 Pipeline Cards + Config Inspector */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col gap-6">
-        {/* THREE PIPELINE CARDS (Trigger → AI Agent Core → Tied Output) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6 relative">
-          {/* COMPONENT 1: TRIGGER */}
-          <div
-            onClick={() => handleSelectComponent("trigger")}
-            className={`p-5 rounded-2xl border transition-all cursor-pointer relative flex flex-col justify-between ${
-              selectedComponent === "trigger" && activeTab === "trigger"
-                ? "bg-slate-900 border-indigo-500/80 shadow-xl shadow-indigo-500/10 ring-1 ring-indigo-500/50"
-                : "bg-slate-900/70 hover:bg-slate-900 border-slate-800 hover:border-slate-700"
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-xs font-mono">
-                    1
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400 font-bold block">
-                      Stage 01: Inbound
-                    </span>
-                    <h3 className="text-sm font-bold text-white">Trigger</h3>
-                  </div>
+      {/* 🚀 DEPLOY & SHARE MODAL DIALOG */}
+      {isDeployModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/80">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-linear-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                  <Share2 className="w-4 h-4" />
                 </div>
-
-                <div className="shrink-0">
-                  {executedStages.includes("trigger") ? (
-                    <div className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
-                      <CheckCircle2 className="w-3 h-3" />
-                      <span>Received</span>
-                    </div>
-                  ) : activeExecutionStage === "trigger" ? (
-                    <div className="flex items-center gap-1 text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                      <span>Listening</span>
-                    </div>
-                  ) : (
-                    <span className="text-[11px] text-slate-500 font-mono bg-slate-800/60 px-2 py-0.5 rounded">
-                      Ready
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Deploy & Share Agent</span>
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                        activeDoc.status === "active"
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                          : "bg-slate-800 text-slate-400 border-slate-700"
+                      }`}
+                    >
+                      {activeDoc.status === "active" ? "● Active & Live" : "○ Draft Mode"}
                     </span>
-                  )}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Distribution endpoints and channels for "{activeDoc.name}"
+                  </p>
                 </div>
               </div>
-
-              <div className="mb-3">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span
-                    className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${activeDoc.trigger.badgeColor}`}
-                  >
-                    {activeDoc.trigger.app}
-                  </span>
-                  <span className="text-xs font-mono text-slate-400 font-semibold truncate">
-                    Type: {activeDoc.trigger.type}
-                  </span>
-                </div>
-                <h4 className="text-sm font-semibold text-slate-100">
-                  {activeDoc.trigger.title}
-                </h4>
-                <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                  {activeDoc.trigger.subtitle}
-                </p>
-              </div>
+              <button
+                onClick={() => setIsDeployModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            {/* Bottom Payload Variables Preview */}
-            <div className="pt-3 border-t border-slate-800/80">
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">
-                Inbound Payload Keys:
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {Object.keys(activeDoc.trigger.samplePayload)
-                  .slice(0, 3)
-                  .map((key) => (
-                    <span
-                      key={key}
-                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 border border-slate-700"
-                    >
-                      @{key}
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 text-xs text-slate-300">
+              {activeDoc.status !== "active" ? (
+                <div className="p-5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span>Agent is in Draft Mode</span>
+                  </div>
+                  <p className="text-slate-300 leading-relaxed text-xs">
+                    This workflow is currently inactive. Toggle the <strong>Live Active</strong> switch in the studio header to activate the real-time public chat URL, webhook listeners, or bot integrations.
+                  </p>
+                  <div className="pt-2 flex items-center gap-3">
+                    <WorkflowActiveToggle size="md" />
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      Click to activate immediately
                     </span>
-                  ))}
-                {Object.keys(activeDoc.trigger.samplePayload).length > 3 && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                    +{Object.keys(activeDoc.trigger.samplePayload).length - 3}{" "}
-                    more
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* CHAT TRIGGER DEPLOYMENT */}
+                  {activeDoc.trigger.type === "chat" && (
+                    <div className="space-y-4">
+                      {/* Public End-User Chat Link */}
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <MessageSquare className="w-4 h-4 text-emerald-400" />
+                            <span className="font-semibold text-white">Public End-User Chat URL</span>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                            Live & Ready
+                          </span>
+                        </div>
+                        <p className="text-slate-400 text-xs">
+                          Share this link with your users or teammates. They will access a clean, full-screen chat interface to converse with your AI agent.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 bg-black/60 px-3 py-2 rounded-lg border border-slate-800 text-emerald-300 font-mono text-xs truncate select-all">
+                            {publicChatFullUrl}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={handleCopyPublicChat}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-300 font-semibold transition-colors cursor-pointer shrink-0"
+                          >
+                            {copiedPublicChat ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedPublicChat ? "Copied" : "Copy Link"}</span>
+                          </button>
+                          <a
+                            href={`/chat/${activeDoc.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 font-bold hover:brightness-110 transition-all shrink-0 shadow-xs"
+                          >
+                            <span>Open</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      </div>
+
+                      {/* Embeddable Iframe Widget */}
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Code2 className="w-4 h-4 text-cyan-400" />
+                            <span className="font-semibold text-white">Embed Iframe Widget</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCopyEmbed}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-cyan-300 font-mono text-xs transition-colors cursor-pointer"
+                          >
+                            {copiedEmbed ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedEmbed ? "Copied" : "Copy Snippet"}</span>
+                          </button>
+                        </div>
+                        <p className="text-slate-400 text-xs">
+                          Embed this agent directly into your website, dashboard, or internal tool:
+                        </p>
+                        <pre className="bg-black/60 p-3 rounded-lg border border-slate-800 text-cyan-300 font-mono text-[11px] overflow-x-auto select-all">
+{`<iframe
+  src="${publicChatFullUrl}"
+  width="100%"
+  height="650"
+  frameborder="0"
+  style="border-radius: 12px; border: 1px solid #1e293b;"
+></iframe>`}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* WEBHOOK TRIGGER DEPLOYMENT */}
+                  {activeDoc.trigger.type === "webhook" && (
+                    <div className="space-y-4">
+                      {/* Webhook Endpoint */}
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Globe className="w-4 h-4 text-cyan-400" />
+                            <span className="font-semibold text-white">HTTP Webhook Endpoint</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono text-[10px] font-bold border border-cyan-500/30">
+                            POST
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 bg-black/60 px-3 py-2 rounded-lg border border-slate-800 text-cyan-300 font-mono text-xs truncate select-all">
+                            {webhookFullUrl}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={handleCopyWebhookUrl}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-cyan-300 font-semibold transition-colors cursor-pointer shrink-0"
+                          >
+                            {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedWebhook ? "Copied" : "Copy URL"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Secret API Key */}
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Key className="w-4 h-4 text-amber-400" />
+                            <span className="font-semibold text-white">Secret Bearer API Key</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleRegenerateKey}
+                            disabled={isRegeneratingKey}
+                            className="flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-white transition-colors cursor-pointer"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${isRegeneratingKey ? "animate-spin text-cyan-400" : ""}`} />
+                            <span>Regenerate Key</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 bg-black/60 px-3 py-2 rounded-lg border border-slate-800 text-amber-300 font-mono text-xs truncate select-all">
+                            {showApiKey
+                              ? (deploymentInfo?.api_key || activeDoc.trigger.webhookSecret)
+                              : `${(deploymentInfo?.api_key || activeDoc.trigger.webhookSecret || "").slice(0, 14)}••••••••••••••••`}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                            title={showApiKey ? "Hide key" : "Show key"}
+                          >
+                            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCopyApiKey}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-300 font-semibold transition-colors cursor-pointer shrink-0"
+                          >
+                            {copiedApiKey ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedApiKey ? "Copied" : "Copy Key"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* cURL Example */}
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-white font-mono text-xs">cURL Snippet</span>
+                          <button
+                            type="button"
+                            onClick={handleCopyCurlCommand}
+                            className="flex items-center gap-1 text-[11px] font-mono text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                          >
+                            {copiedCurl ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedCurl ? "Copied" : "Copy cURL"}</span>
+                          </button>
+                        </div>
+                        <pre className="bg-black/60 p-3 rounded-lg border border-slate-800 text-slate-300 font-mono text-[11px] overflow-x-auto select-all">
+{`curl -X POST "${webhookFullUrl}" \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${deploymentInfo?.api_key || activeDoc.trigger.webhookSecret || "YOUR_SECRET_KEY"}" \\
+  -d '${JSON.stringify(activeDoc.trigger.samplePayload || { message: "Hello agent" })}'`}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TELEGRAM OR DISCORD BOT DEPLOYMENT */}
+                  {(activeDoc.trigger.type === "telegram" || activeDoc.trigger.type === "discord") && (
+                    <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Bot className="w-5 h-5 text-indigo-400" />
+                          <h4 className="font-bold text-white text-sm">
+                            {activeDoc.trigger.type === "telegram" ? "Telegram Bot Listener" : "Discord Bot Listener"}
+                          </h4>
+                        </div>
+                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[11px]">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          Active Listener
+                        </span>
+                      </div>
+
+                      <p className="text-slate-400 text-xs leading-relaxed">
+                        {activeDoc.trigger.type === "telegram"
+                          ? "Your FastAPI backend is actively listening for incoming webhook events from Telegram. Any messages or commands directed to the configured bot will be executed by this agent."
+                          : "Your Discord bot listener is connected and listening for slash interactions (/ask). Incoming commands will be processed by the agent core and replied to in Discord."}
+                      </p>
+
+                      {activeDoc.trigger.type === "telegram" && activeDoc.trigger.telegramSettings?.botUsername && (
+                        <div className="pt-2">
+                          <a
+                            href={`https://t.me/${activeDoc.trigger.telegramSettings.botUsername.replace(/^@/, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-500 text-slate-950 font-bold text-xs hover:brightness-110 transition-all shadow-sm shadow-sky-500/20"
+                          >
+                            <span>Open @{activeDoc.trigger.telegramSettings.botUsername.replace(/^@/, "")} on Telegram</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                Real-time compilation and execution powered by FastAPI & Groq
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDeployModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-xs font-semibold text-white rounded-xl transition-colors cursor-pointer ml-auto"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. SPLIT-PANE CONTAINER (Sequential Left Flow + Right Contextual Inspector) */}
+      <div className="flex-1 w-full flex overflow-hidden min-h-[calc(100vh-57px)]">
+        {/* ================= LEFT PANE: SEQUENTIAL WORKFLOW PIPELINE ================= */}
+        {isLeftCollapsed ? (
+          /* Mini Collapsed Rail (64px) */
+          <div className="w-16 shrink-0 border-r border-slate-800/80 bg-slate-950 flex flex-col items-center py-4 gap-4 select-none">
+            <button
+              onClick={() => setIsLeftCollapsed(false)}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-colors cursor-pointer"
+              title="Expand Sequential Pipeline"
+            >
+              <PanelLeftOpen className="w-4 h-4 text-cyan-400" />
+            </button>
+
+            <div className="w-8 h-px bg-slate-800" />
+
+            {/* Mini Step 1: Trigger */}
+            <button
+              onClick={() => handleSelectComponent("trigger")}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs font-mono transition-all cursor-pointer relative group ${
+                selectedComponent === "trigger" && activeRightTab === "config"
+                  ? "bg-indigo-500/25 text-indigo-300 border border-indigo-500 ring-2 ring-indigo-500/20 shadow-lg shadow-indigo-500/20"
+                  : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700"
+              }`}
+              title={`Stage 01: Trigger (${activeDoc.trigger.type})`}
+            >
+              1
+              <span className="absolute left-full ml-3 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700 shadow-lg">
+                Stage 01: Trigger ({activeDoc.trigger.app})
+              </span>
+            </button>
+
+            {/* Connector */}
+            <div className="w-0.5 h-5 bg-slate-800/80 rounded-full" />
+
+            {/* Mini Step 2: Agent & Tools */}
+            <button
+              onClick={() => handleSelectComponent("agent")}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs font-mono transition-all cursor-pointer relative group ${
+                selectedComponent === "agent" && activeRightTab === "config"
+                  ? "bg-amber-500/25 text-amber-300 border border-amber-500 ring-2 ring-amber-500/20 shadow-lg shadow-amber-500/20"
+                  : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700"
+              }`}
+              title={`Stage 02: AI Agent & Tools (${activeDoc.agent.tools.length} tools)`}
+            >
+              2
+              <span className="absolute left-full ml-3 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700 shadow-lg">
+                Stage 02: Agent & Tools ({activeDoc.agent.tools.length})
+              </span>
+            </button>
+
+            {/* Connector */}
+            <div className="w-0.5 h-5 bg-slate-800/80 rounded-full" />
+
+            {/* Mini Step 3: Tied Output */}
+            <button
+              onClick={() => handleSelectComponent("output")}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs font-mono transition-all cursor-pointer relative group ${
+                selectedComponent === "output" && activeRightTab === "config"
+                  ? "bg-emerald-500/25 text-emerald-300 border border-emerald-500 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/20"
+                  : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700"
+              }`}
+              title={`Stage 03: Tied Output (${activeDoc.output.type})`}
+            >
+              3
+              <span className="absolute left-full ml-3 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700 shadow-lg">
+                Stage 03: Output ({activeDoc.output.type})
+              </span>
+            </button>
+
+            <div className="mt-auto flex flex-col items-center gap-3">
+              <button
+                onClick={() => {
+                  setActiveRightTab("storage");
+                  loadStoredExecutions(activeDoc.id);
+                }}
+                className={`p-2 rounded-xl border transition-all cursor-pointer relative group ${
+                  activeRightTab === "storage"
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500"
+                    : "bg-slate-900 text-slate-400 hover:text-white border-slate-800"
+                }`}
+                title="Storage & Retention"
+              >
+                <Database className="w-4 h-4" />
+                <span className="absolute left-full ml-3 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700 shadow-lg">
+                  Storage & Retention
+                </span>
+              </button>
+
+              <button
+                onClick={() => setActiveRightTab("logs")}
+                className={`p-2 rounded-xl border transition-all cursor-pointer relative group ${
+                  activeRightTab === "logs"
+                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500"
+                    : "bg-slate-900 text-slate-400 hover:text-white border-slate-800"
+                }`}
+                title="Live Audit Logs"
+              >
+                <Terminal className="w-4 h-4" />
+                <span className="absolute left-full ml-3 px-2 py-1 rounded bg-slate-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-slate-700 shadow-lg">
+                  Live Audit Logs
+                </span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Full Sequential Stepper Left Pane */
+          <div className="w-full md:w-[380px] lg:w-[410px] shrink-0 border-r border-slate-800/80 bg-slate-950/80 p-4 sm:p-5 flex flex-col gap-3.5 overflow-y-auto">
+            {/* Pipeline Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+                  Sequential Pipeline
+                </span>
+              </div>
+              <button
+                onClick={() => setIsLeftCollapsed(true)}
+                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
+                title="Collapse Pipeline Pane"
+              >
+                <PanelLeftClose className="w-3.5 h-3.5" />
+                <span>Collapse</span>
+              </button>
+            </div>
+
+            {/* STEP 1: TRIGGER */}
+            <div
+              onClick={() => handleSelectComponent("trigger")}
+              className={`p-4 rounded-xl border transition-all cursor-pointer relative flex flex-col justify-between ${
+                selectedComponent === "trigger" && activeRightTab === "config"
+                  ? "bg-slate-900 border-indigo-500 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/40"
+                  : "bg-slate-900/60 hover:bg-slate-900/90 border-slate-800/90 hover:border-slate-750"
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-xs font-mono">
+                      1
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400 font-bold block">
+                        Stage 01: Inbound
+                      </span>
+                      <h3 className="text-xs font-bold text-white">Trigger</h3>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0">
+                    {executedStages.includes("trigger") ? (
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Received</span>
+                      </div>
+                    ) : activeExecutionStage === "trigger" ? (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>Listening</span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 font-mono bg-slate-800/60 px-1.5 py-0.5 rounded">
+                        Ready
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${activeDoc.trigger.badgeColor}`}>
+                      {activeDoc.trigger.app}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-400 truncate">
+                      Type: {activeDoc.trigger.type}
+                    </span>
+                  </div>
+                  <h4 className="text-xs font-semibold text-slate-100 truncate">
+                    {activeDoc.trigger.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 line-clamp-1">
+                    {activeDoc.trigger.subtitle}
+                  </p>
+                </div>
+              </div>
+
+              {/* Payload keys summary */}
+              <div className="pt-2.5 mt-2.5 border-t border-slate-800/80 flex items-center gap-1 overflow-hidden">
+                <span className="text-[10px] text-slate-500 font-mono shrink-0">Payload:</span>
+                {Object.keys(activeDoc.trigger.samplePayload || {}).slice(0, 2).map((key) => (
+                  <span key={key} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 border border-slate-700 truncate max-w-[90px]">
+                    @{key}
+                  </span>
+                ))}
+                {Object.keys(activeDoc.trigger.samplePayload || {}).length > 2 && (
+                  <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-800 text-slate-400">
+                    +{Object.keys(activeDoc.trigger.samplePayload).length - 2}
                   </span>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* COMPONENT 2: AI AGENT CORE (Model + Storage + Configurable Tools) */}
-          <div
-            onClick={() => handleSelectComponent("agent")}
-            className={`p-5 rounded-2xl border transition-all cursor-pointer relative flex flex-col justify-between ${
-              selectedComponent === "agent" && activeTab === "agent"
-                ? "bg-slate-900 border-amber-500/80 shadow-xl shadow-amber-500/10 ring-1 ring-amber-500/50"
-                : "bg-slate-900/70 hover:bg-slate-900 border-slate-800 hover:border-slate-700"
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs font-mono">
-                    2
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold block">
-                      Stage 02: Core
-                    </span>
-                    <h3 className="text-sm font-bold text-white">
-                      AI Agent & Tools
-                    </h3>
-                  </div>
-                </div>
+            {/* FLOW CONNECTOR 1 -> 2 */}
+            <div className="flex items-center justify-center -my-1.5 py-0.5 text-slate-600">
+              <div className="flex flex-col items-center">
+                <div className="w-0.5 h-3 bg-indigo-500/40" />
+                <ChevronDown className="w-4 h-4 text-indigo-400 -mt-1" />
+              </div>
+            </div>
 
-                <div className="shrink-0">
-                  {executedStages.includes("agent") ? (
-                    <div className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
-                      <CheckCircle2 className="w-3 h-3" />
-                      <span>Synthesized</span>
+            {/* STEP 2: AGENT & TOOLS */}
+            <div
+              onClick={() => handleSelectComponent("agent")}
+              className={`p-4 rounded-xl border transition-all cursor-pointer relative flex flex-col justify-between ${
+                selectedComponent === "agent" && activeRightTab === "config"
+                  ? "bg-slate-900 border-amber-500 shadow-lg shadow-amber-500/10 ring-1 ring-amber-500/40"
+                  : "bg-slate-900/60 hover:bg-slate-900/90 border-slate-800/90 hover:border-slate-750"
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs font-mono">
+                      2
                     </div>
-                  ) : activeExecutionStage === "agent" ||
-                    activeExecutionStage === "tool_call" ? (
-                    <div className="flex items-center gap-1 text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                      <span>
-                        {activeExecutionStage === "tool_call"
-                          ? "Calling Tools"
-                          : "Reasoning"}
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold block">
+                        Stage 02: Core
                       </span>
+                      <h3 className="text-xs font-bold text-white">AI Agent & Tools</h3>
                     </div>
-                  ) : (
-                    <span className="text-[11px] text-slate-500 font-mono bg-slate-800/60 px-2 py-0.5 rounded">
-                      Ready
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="mb-3 space-y-1">
-                <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border bg-amber-500/20 text-amber-300 border-amber-500/30">
-                    {currentModelDef || activeDoc.agent.model}
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded border bg-indigo-500/10 text-indigo-300 border-indigo-500/20 font-mono">
-                    {currentStorageDef?.name || "Session Memory"}
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveTab("storage");
-                    }}
-                    className={`text-[10px] px-2 py-0.5 rounded border font-mono transition-colors cursor-pointer ${
-                      (activeDoc.executionStorage || "all") === "none"
-                        ? "bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20"
-                        : (activeDoc.executionStorage || "all") === "errors_only"
-                        ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
-                        : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
-                    }`}
-                    title="Execution Storage Policy: Click to configure"
-                  >
-                    Storage: {(activeDoc.executionStorage || "all") === "errors_only" ? "Errors Only" : (activeDoc.executionStorage || "all") === "none" ? "None" : "All Runs"}
-                  </span>
-                </div>
-                <h4 className="text-sm font-semibold text-slate-100">
-                  {activeDoc.agent.title}
-                </h4>
-                <p className="text-xs text-slate-400 line-clamp-2">
-                  {activeDoc.agent.subtitle}
-                </p>
-              </div>
-            </div>
-
-            {/* Bottom Configured Tools Preview */}
-            <div className="pt-3 border-t border-slate-800/80">
-              <div className="  text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">
-                <span>Active Tools ({activeDoc.agent.tools.length}):</span>
-              </div>
-            </div>
-          </div>
-
-          {/* COMPONENT 3: OUTPUT ACTION (Tied to Trigger Point) */}
-          <div
-            onClick={() => handleSelectComponent("output")}
-            className={`p-5 rounded-2xl border transition-all cursor-pointer relative flex flex-col justify-between ${
-              selectedComponent === "output" && activeTab === "output"
-                ? "bg-slate-900 border-emerald-500/80 shadow-xl shadow-emerald-500/10 ring-1 ring-emerald-500/50"
-                : "bg-slate-900/70 hover:bg-slate-900 border-slate-800 hover:border-slate-700"
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs font-mono">
-                    3
                   </div>
-                  <div>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 font-bold block">
-                      Stage 03: Return
-                    </span>
-                    <h3 className="text-sm font-bold text-white">
-                      Tied Output
-                    </h3>
+
+                  <div className="shrink-0">
+                    {executedStages.includes("agent") ? (
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Synthesized</span>
+                      </div>
+                    ) : activeExecutionStage === "agent" || activeExecutionStage === "tool_call" ? (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>{activeExecutionStage === "tool_call" ? "Tools" : "Reasoning"}</span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 font-mono bg-slate-800/60 px-1.5 py-0.5 rounded">
+                        Ready
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                <div className="shrink-0">
-                  {executedStages.includes("output") ? (
-                    <div className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
-                      <CheckCircle2 className="w-3 h-3" />
-                      <span>Returned</span>
-                    </div>
-                  ) : activeExecutionStage === "output" ? (
-                    <div className="flex items-center gap-1 text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                      <span>Sending</span>
-                    </div>
-                  ) : (
-                    <span className="text-[11px] text-slate-500 font-mono bg-slate-800/60 px-2 py-0.5 rounded">
-                      Ready
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded border bg-amber-500/20 text-amber-300 border-amber-500/30 truncate max-w-[140px]">
+                      {currentModelDef || activeDoc.agent.model}
                     </span>
-                  )}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border bg-indigo-500/10 text-indigo-300 border-indigo-500/20 font-mono">
+                      {currentStorageDef?.name || "Session"}
+                    </span>
+                  </div>
+                  <h4 className="text-xs font-semibold text-slate-100 truncate">
+                    {activeDoc.agent.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 line-clamp-1">
+                    {activeDoc.agent.subtitle}
+                  </p>
                 </div>
               </div>
 
-              <div className="mb-3">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span
-                    className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${activeDoc.output.badgeColor}`}
-                  >
-                    {activeDoc.output.type}
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono truncate">
-                    → Bound to: @{activeDoc.output.targetTrigger}
-                  </span>
-                </div>
-                <h4 className="text-sm font-semibold text-slate-100">
-                  {activeDoc.output.title}
-                </h4>
-                <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                  {activeDoc.output.subtitle}
-                </p>
+              {/* Tools count & policy */}
+              <div className="pt-2.5 mt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
+                <span className="text-slate-400">
+                  Tools: <strong className="text-cyan-300">{activeDoc.agent.tools.length} active</strong>
+                </span>
+                <span className="text-slate-400">
+                  Retention: <strong className="text-purple-300">{(activeDoc.executionStorage || "all") === "errors_only" ? "Errors" : (activeDoc.executionStorage || "all") === "none" ? "None" : "All"}</strong>
+                </span>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* 4. Configuration Panel (Tabs for Trigger, Agent & Tools, Output, and Live Logs) */}
-        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl overflow-hidden backdrop-blur-xl">
-          {/* Tab Navigation */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-slate-800 bg-slate-950/70">
-            <div className="flex items-center gap-2">
+            {/* FLOW CONNECTOR 2 -> 3 */}
+            <div className="flex items-center justify-center -my-1.5 py-0.5 text-slate-600">
+              <div className="flex flex-col items-center">
+                <div className="w-0.5 h-3 bg-amber-500/40" />
+                <ChevronDown className="w-4 h-4 text-amber-400 -mt-1" />
+              </div>
+            </div>
+
+            {/* STEP 3: TIED OUTPUT */}
+            <div
+              onClick={() => handleSelectComponent("output")}
+              className={`p-4 rounded-xl border transition-all cursor-pointer relative flex flex-col justify-between ${
+                selectedComponent === "output" && activeRightTab === "config"
+                  ? "bg-slate-900 border-emerald-500 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/40"
+                  : "bg-slate-900/60 hover:bg-slate-900/90 border-slate-800/90 hover:border-slate-750"
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs font-mono">
+                      3
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 font-bold block">
+                        Stage 03: Return
+                      </span>
+                      <h3 className="text-xs font-bold text-white">Tied Output</h3>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0">
+                    {executedStages.includes("output") ? (
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Returned</span>
+                      </div>
+                    ) : activeExecutionStage === "output" ? (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>Sending</span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 font-mono bg-slate-800/60 px-1.5 py-0.5 rounded">
+                        Ready
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${activeDoc.output.badgeColor}`}>
+                      {activeDoc.output.type}
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono truncate">
+                      → Bound: @{activeDoc.output.targetTrigger}
+                    </span>
+                  </div>
+                  <h4 className="text-xs font-semibold text-slate-100 truncate">
+                    {activeDoc.output.title}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 line-clamp-1">
+                    {activeDoc.output.subtitle}
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2.5 mt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                <span>Target: @{activeDoc.output.targetTrigger}</span>
+                <span className="text-emerald-400">Direct Return</span>
+              </div>
+            </div>
+
+            {/* Bottom Retention & Log quick buttons */}
+            <div className="mt-auto pt-3 border-t border-slate-800/80 flex flex-col gap-2">
               <button
-                onClick={() => handleSelectComponent("trigger")}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === "trigger"
-                    ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
+                onClick={() => {
+                  setActiveRightTab("storage");
+                  loadStoredExecutions(activeDoc.id);
+                }}
+                className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
+                  activeRightTab === "storage"
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
+                    : "bg-slate-900/60 text-slate-400 hover:text-slate-200 border-slate-800 hover:border-slate-700"
                 }`}
               >
-                <div className="w-4 h-4 rounded bg-indigo-500/20 flex items-center justify-center text-[10px] font-mono">
-                  1
+                <div className="flex items-center gap-2 font-medium">
+                  <Database className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Execution Storage</span>
                 </div>
-                <span>Configure Trigger ({activeDoc.trigger.type})</span>
-              </button>
-
-              <button
-                onClick={() => handleSelectComponent("agent")}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === "agent"
-                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <div className="w-4 h-4 rounded bg-amber-500/20 flex items-center justify-center text-[10px] font-mono">
-                  2
-                </div>
-                <span>
-                  Configure Agent & Tools ({activeDoc.agent.tools.length})
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                  {(activeDoc.executionStorage || "all") === "errors_only" ? "Errors Only" : (activeDoc.executionStorage || "all") === "none" ? "None" : "All Runs"}
                 </span>
               </button>
 
               <button
-                onClick={() => handleSelectComponent("output")}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === "output"
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
+                onClick={() => setActiveRightTab("logs")}
+                className={`flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
+                  activeRightTab === "logs"
+                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+                    : "bg-slate-900/60 text-slate-400 hover:text-slate-200 border-slate-800 hover:border-slate-700"
                 }`}
               >
-                <div className="w-4 h-4 rounded bg-emerald-500/20 flex items-center justify-center text-[10px] font-mono">
-                  3
+                <div className="flex items-center gap-2 font-medium">
+                  <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Live Audit Logs</span>
                 </div>
-                <span>Configure Tied Output</span>
+                <span className="text-[10px] font-mono text-cyan-400">
+                  {executionLogs.length} events
+                </span>
               </button>
             </div>
+          </div>
+        )}
 
-            <div className="flex items-center gap-2">
+        {/* ================= RIGHT PANE: CONTEXTUAL INSPECTOR & CHAT RUNNER ================= */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-y-auto bg-slate-900/40">
+          {/* Top Sticky Inspector Tab Bar */}
+          <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-2.5 border-b border-slate-800 bg-slate-950/90 backdrop-blur-md shrink-0">
+            <div className="flex items-center gap-1.5">
+              {/* Tab 1: Step Config */}
+              <button
+                onClick={() => setActiveRightTab("config")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  activeRightTab === "config"
+                    ? "bg-slate-800 text-white border border-slate-700 shadow-xs"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                }`}
+              >
+                <Settings2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Step Config</span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                    activeTab === "trigger"
+                      ? "bg-indigo-500/20 text-indigo-300"
+                      : activeTab === "agent"
+                        ? "bg-amber-500/20 text-amber-300"
+                        : "bg-emerald-500/20 text-emerald-300"
+                  }`}
+                >
+                  {activeTab === "trigger" ? "01: Trigger" : activeTab === "agent" ? "02: Agent" : "03: Output"}
+                </span>
+              </button>
+
+              {/* Tab 2: Test & Chat */}
+              <button
+                onClick={() => setActiveRightTab("chat")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  activeRightTab === "chat"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Test & Chat</span>
+                {chatMessages.length > 0 && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300">
+                    {chatMessages.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Tab 3: Storage & Retention */}
               <button
                 onClick={() => {
-                  setActiveTab("storage");
+                  setActiveRightTab("storage");
                   loadStoredExecutions(activeDoc.id);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer ${
-                  activeTab === "storage"
-                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800"
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  activeRightTab === "storage"
+                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-xs"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
                 }`}
               >
                 <Database className="w-3.5 h-3.5 text-purple-400" />
                 <span>Storage & Retention</span>
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
-                    (activeDoc.executionStorage || "all") === "errors_only"
-                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                      : (activeDoc.executionStorage || "all") === "none"
-                      ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                      : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  }`}
-                >
-                  {(activeDoc.executionStorage || "all") === "errors_only"
-                    ? "Errors"
-                    : (activeDoc.executionStorage || "all") === "none"
-                    ? "None"
-                    : "All"}
-                </span>
               </button>
 
+              {/* Tab 4: Live Logs */}
               <button
-                onClick={() => setActiveTab("logs")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer ${
-                  activeTab === "logs"
-                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                    : "text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800"
+                onClick={() => setActiveRightTab("logs")}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  activeRightTab === "logs"
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
                 }`}
               >
                 <Terminal className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Live Logs ({executionLogs.length})</span>
               </button>
             </div>
+
+            {/* Quick Context Actions */}
+            <div className="flex items-center gap-2">
+              {activeRightTab === "chat" && (
+                <>
+                  {chatMessages.length > 0 && (
+                    <button
+                      onClick={clearChatMessages}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-400 hover:text-rose-400 bg-slate-900 border border-slate-800 hover:border-rose-900/50 transition-colors cursor-pointer"
+                      title="Clear Chat Messages"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span className="hidden sm:inline">Clear Chat</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => openChatSidebar()}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
+                    title="Open in Slide-over Drawer"
+                  >
+                    <Maximize2 className="w-3 h-3 text-cyan-400" />
+                    <span className="hidden sm:inline">Drawer Mode</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
+          {/* Sub-bar for Step Config (Allows fast switching right in the inspector) */}
+          {activeRightTab === "config" && (
+            <div className="px-4 sm:px-6 py-2.5 bg-slate-950/40 border-b border-slate-850 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono text-slate-500 uppercase tracking-wider hidden sm:inline">
+                  Step Config:
+                </span>
+                <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                  <button
+                    onClick={() => handleSelectComponent("trigger")}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
+                      activeTab === "trigger"
+                        ? "bg-indigo-500/20 text-indigo-300 font-semibold shadow-xs"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    1. Trigger ({activeDoc.trigger.app})
+                  </button>
+                  <button
+                    onClick={() => handleSelectComponent("agent")}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
+                      activeTab === "agent"
+                        ? "bg-amber-500/20 text-amber-300 font-semibold shadow-xs"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    2. Agent & Tools ({activeDoc.agent.tools.length})
+                  </button>
+                  <button
+                    onClick={() => handleSelectComponent("output")}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
+                      activeTab === "output"
+                        ? "bg-emerald-500/20 text-emerald-300 font-semibold shadow-xs"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    3. Tied Output ({activeDoc.output.type})
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB 1: TRIGGER CONFIGURATION */}
-          {activeTab === "trigger" && (
+          {activeRightTab === "config" && activeTab === "trigger" && (
             <div className="p-6 sm:p-8 space-y-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                 <div>
@@ -1287,7 +1745,7 @@ print(response.json())`}</pre>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                   Select Inbound Trigger Source
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   {[
                     {
                       type: "chat" as TriggerType,
@@ -1314,6 +1772,12 @@ print(response.json())`}</pre>
                       title: "Discord Bot",
                       desc: "Listens for mentions, commands, or channel messages",
                       icon: <Hash className="w-5 h-5 text-indigo-400" />,
+                    },
+                    {
+                      type: "agentmail" as TriggerType,
+                      title: "AgentMail",
+                      desc: "Dedicated inbox receiving real-time emails via webhooks",
+                      icon: <Mail className="w-5 h-5 text-emerald-400" />,
                     },
                   ].map((t) => (
                     <button
@@ -2092,6 +2556,264 @@ print(response.json())`}</pre>
                       </div>
                     </div>
                   )}
+
+                  {/* 5. AGENTMAIL INBOUND EMAIL WEBHOOK */}
+                  {activeDoc.trigger.type === "agentmail" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                        <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Mail className="w-4 h-4 text-emerald-400" />
+                          AgentMail Inbound Email Configuration
+                        </h4>
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded border ${
+                            activeDoc.status === "active" && agentmailActive
+                              ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                              : "bg-slate-800 text-slate-400 border-slate-700"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              activeDoc.status === "active" && agentmailActive
+                                ? "bg-emerald-400 animate-ping"
+                                : "bg-slate-500"
+                            }`}
+                          />
+                          {activeDoc.status === "active" && agentmailActive
+                            ? "AgentMail Live"
+                            : "Waiting for Inbound"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Agent Dedicated Email Address
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. support-agent@agentmail.to"
+                            value={activeDoc.trigger.agentmailSettings?.inboxEmail || ""}
+                            onChange={(e) =>
+                              updateTrigger({
+                                agentmailSettings: {
+                                  ...(activeDoc.trigger.agentmailSettings || {}),
+                                  inboxEmail: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Inbox ID (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="inbox_..."
+                            value={activeDoc.trigger.agentmailSettings?.inboxId || ""}
+                            onChange={(e) =>
+                              updateTrigger({
+                                agentmailSettings: {
+                                  ...(activeDoc.trigger.agentmailSettings || {}),
+                                  inboxId: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            AgentMail API Key
+                          </label>
+                          <input
+                            type="password"
+                            placeholder="am_... or env:AGENTMAIL_API_KEY"
+                            value={activeDoc.trigger.agentmailSettings?.apiKey || ""}
+                            onChange={(e) =>
+                              updateTrigger({
+                                agentmailSettings: {
+                                  ...(activeDoc.trigger.agentmailSettings || {}),
+                                  apiKey: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">
+                            Webhook Secret (Optional Verification)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Optional secret header"
+                            value={activeDoc.trigger.agentmailSettings?.webhookSecret || ""}
+                            onChange={(e) =>
+                              updateTrigger({
+                                agentmailSettings: {
+                                  ...(activeDoc.trigger.agentmailSettings || {}),
+                                  webhookSecret: e.target.value,
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          ngrok / Public Webhook Base URL
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="https://xxxx.ngrok-free.app or https://api.yourdomain.com"
+                          value={activeDoc.trigger.agentmailSettings?.webhookBaseUrl || ""}
+                          onChange={(e) =>
+                            updateTrigger({
+                              agentmailSettings: {
+                                ...(activeDoc.trigger.agentmailSettings || {}),
+                                webhookBaseUrl: e.target.value,
+                              },
+                            })
+                          }
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-cyan-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      {/* Copyable Webhook URL Box */}
+                      <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-semibold text-slate-300">
+                            Your AgentMail Inbound Webhook URL:
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const base =
+                                activeDoc.trigger.agentmailSettings?.webhookBaseUrl?.trim() ||
+                                "https://your-ngrok.ngrok-free.app";
+                              const fullUrl = `${base.replace(/\/+$/, "")}/api/v1/triggers/agentmail/webhook/${activeDoc.id}`;
+                              navigator.clipboard.writeText(fullUrl);
+                              setCopiedAgentMailUrl(true);
+                              setTimeout(() => setCopiedAgentMailUrl(false), 2000);
+                            }}
+                            className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-mono cursor-pointer"
+                          >
+                            {copiedAgentMailUrl ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-400 font-sans">Copied!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy URL</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-850 font-mono text-xs text-emerald-300 break-all select-all">
+                          {(
+                            activeDoc.trigger.agentmailSettings?.webhookBaseUrl?.trim() ||
+                            "https://your-ngrok.ngrok-free.app"
+                          ).replace(/\/+$/, "")}
+                          /api/v1/triggers/agentmail/webhook/{activeDoc.id}
+                        </div>
+                        <p className="text-[10px] text-slate-400">
+                          Paste this URL in the{" "}
+                          <a
+                            href="https://console.agentmail.to"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-emerald-400 hover:underline"
+                          >
+                            AgentMail Console
+                          </a>{" "}
+                          under Webhooks to receive incoming email notifications instantly.
+                        </p>
+                      </div>
+
+                      {/* Auto-Reply to Thread toggle */}
+                      <label className="flex items-center gap-3 p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/20 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={activeDoc.trigger.agentmailSettings?.autoReply ?? true}
+                          onChange={(e) =>
+                            updateTrigger({
+                              agentmailSettings: {
+                                ...(activeDoc.trigger.agentmailSettings || {}),
+                                autoReply: e.target.checked,
+                              },
+                            })
+                          }
+                          className="w-4 h-4 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 bg-slate-900 cursor-pointer"
+                        />
+                        <span className="text-xs text-slate-300">
+                          <strong className="text-white">Auto-Reply to Email Threads</strong> – Automatically dispatches the agent's completed answer back to the sender within the ongoing conversation thread.
+                        </span>
+                      </label>
+
+                      {/* Simulation Section */}
+                      <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                            Simulate Incoming Email Event
+                          </label>
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                placeholder="Sender Email"
+                                value={agentmailSimulateSender}
+                                onChange={(e) => setAgentmailSimulateSender(e.target.value)}
+                                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Subject Line"
+                                value={agentmailSimulateSubject}
+                                onChange={(e) => setAgentmailSimulateSubject(e.target.value)}
+                                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder="Simulated email body inquiry..."
+                                value={agentmailSimulateBody}
+                                onChange={(e) => setAgentmailSimulateBody(e.target.value)}
+                                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleSimulateAgentMail}
+                                disabled={agentmailSimulateLoading}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer flex items-center gap-1 shrink-0 disabled:opacity-50"
+                              >
+                                <Play className="w-3 h-3" />
+                                {agentmailSimulateLoading ? "Testing..." : "Test Event"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {agentmailStatusMsg && (
+                          <p className="text-[11px] font-mono text-emerald-300 bg-slate-950/60 p-2 rounded border border-slate-800">
+                            {agentmailStatusMsg}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Right Column: Sample Inbound Payload */}
@@ -2143,7 +2865,7 @@ print(response.json())`}</pre>
           )}
 
           {/* TAB 2: AI AGENT CORE & CONFIGURABLE TOOLS (like n8n) */}
-          {activeTab === "agent" && (
+          {activeRightTab === "config" && activeTab === "agent" && (
             <div className="p-6 sm:p-8 space-y-8">
               {/* Header */}
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
@@ -2265,14 +2987,28 @@ print(response.json())`}</pre>
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={openAddToolModal}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:brightness-110 text-slate-950 font-bold text-xs shadow-md shadow-cyan-500/20 transition-all cursor-pointer self-start sm:self-auto"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Tool</span>
-                  </button>
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <Link
+                      href="/docs"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition-colors"
+                      title="Open full tools documentation catalog"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Tools Docs</span>
+                      <ExternalLink className="w-3 h-3 text-cyan-400/80" />
+                    </Link>
+
+                    <button
+                      type="button"
+                      onClick={openAddToolModal}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:brightness-110 text-slate-950 font-bold text-xs shadow-md shadow-cyan-500/20 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Tool</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* List of Configured Tools */}
@@ -2403,6 +3139,18 @@ print(response.json())`}</pre>
 
                           {/* Tool Action Controls */}
                           <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                            {/* Docs Link */}
+                            <Link
+                              href={`/docs?slug=tools/${getToolDocsSlug(tool.toolId)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 text-xs font-medium transition-colors"
+                              title="View tool setup and credentials guide"
+                            >
+                              <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>Docs</span>
+                            </Link>
+
                             {/* Configure Button (Opens Modal) */}
                             <button
                               type="button"
@@ -2437,6 +3185,161 @@ print(response.json())`}</pre>
                               }
                               className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                               title="Delete Tool"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION C.2: MODEL CONTEXT PROTOCOL (MCP) SERVERS */}
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-1.5">
+                      <Server className="w-4 h-4 text-purple-400" />
+                      <span>
+                        Model Context Protocol (MCP) Servers ({(activeDoc.agent.mcpServers || []).length})
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      Connect remote HTTP/SSE or local Stdio MCP servers. Discovered tools are dynamically loaded into your agent.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={openAddMcpModal}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-white font-bold text-xs shadow-md shadow-purple-500/20 transition-all cursor-pointer self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add MCP Server</span>
+                  </button>
+                </div>
+
+                {/* List of Configured MCP Servers */}
+                {(!activeDoc.agent.mcpServers || activeDoc.agent.mcpServers.length === 0) ? (
+                  <div className="p-6 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center space-y-2">
+                    <Server className="w-7 h-7 text-slate-600 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-300">
+                      No MCP Servers Attached
+                    </div>
+                    <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                      Attach external MCP servers (e.g. GitHub, Filesystem, Slack, Database) to expand your agent&apos;s toolset automatically.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={openAddMcpModal}
+                      className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-purple-300 transition-colors cursor-pointer"
+                    >
+                      + Connect MCP Server
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {activeDoc.agent.mcpServers.map((server) => {
+                      const toolCount = server.discoveredTools?.length || 0;
+                      return (
+                        <div
+                          key={server.id}
+                          className={`p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                            server.enabled
+                              ? "bg-slate-950/90 border-slate-800 hover:border-purple-500/30 shadow-sm"
+                              : "bg-slate-950/40 border-slate-900 opacity-60"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0 mt-0.5">
+                              {server.transport === "stdio" ? (
+                                <Terminal className="w-4 h-4" />
+                              ) : (
+                                <Globe className="w-4 h-4" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-xs text-white truncate">
+                                  {server.name}
+                                </span>
+                                <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-purple-950/50 border border-purple-500/30 text-purple-300 font-semibold">
+                                  {server.transport}
+                                </span>
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-emerald-400">
+                                  {toolCount} {toolCount === 1 ? "tool" : "tools"}
+                                </span>
+                                {!server.enabled && (
+                                  <span className="text-[10px] text-amber-400 font-mono">
+                                    Disabled
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-[11px] text-slate-400 font-mono truncate mt-1">
+                                {server.transport !== "stdio" ? (
+                                  <span className="text-slate-300 truncate">
+                                    {server.url}
+                                  </span>
+                                ) : (
+                                  <span>
+                                    Command:{" "}
+                                    <strong className="text-indigo-300">
+                                      {server.command} {(server.args || []).join(" ")}
+                                    </strong>
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Tool names preview */}
+                              {server.discoveredTools && server.discoveredTools.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {server.discoveredTools.slice(0, 5).map((t, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300"
+                                    >
+                                      {t.name}
+                                    </span>
+                                  ))}
+                                  {server.discoveredTools.length > 5 && (
+                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-slate-500">
+                                      +{server.discoveredTools.length - 5} more
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => toggleMcpServer(server.id)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                server.enabled
+                                  ? "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300"
+                                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                              }`}
+                            >
+                              {server.enabled ? "Disable" : "Enable"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => openEditMcpModal(server.id)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition-all cursor-pointer"
+                            >
+                              Edit / Inspect
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => removeMcpServer(server.id)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                              title="Delete MCP Server"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -2538,12 +3441,167 @@ print(response.json())`}</pre>
                     </div>
                   </div>
                 </div>
+
+                {/* Deterministic Mode & Guardrails Shield Section */}
+                <div className="lg:col-span-12 p-5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/60">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <span>Guardrails & Deterministic Execution</span>
+                          <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                            Enterprise Safety
+                          </span>
+                        </h4>
+                        <p className="text-xs text-slate-400">
+                          Enforce input sanitization, block destructive mutations, and guarantee reproducible outputs.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={activeDoc.agent.deterministic ?? true}
+                          onChange={(e) =>
+                            updateAgent({
+                              deterministic: e.target.checked,
+                              temperature: e.target.checked ? 0.0 : 0.2,
+                            })
+                          }
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                        <span className="ml-2 text-xs font-semibold text-slate-300">
+                          Deterministic Mode (seed=42)
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                    {/* Guardrail 1: Prompt Injection Defense */}
+                    <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="guard_prompt_injection"
+                        checked={activeDoc.agent.guardrails?.blockPromptInjection ?? true}
+                        onChange={(e) =>
+                          updateAgent({
+                            guardrails: {
+                              enabled: true,
+                              blockPromptInjection: e.target.checked,
+                              blockDestructiveTools: activeDoc.agent.guardrails?.blockDestructiveTools ?? true,
+                              blockSsrf: activeDoc.agent.guardrails?.blockSsrf ?? true,
+                              maskSecrets: activeDoc.agent.guardrails?.maskSecrets ?? true,
+                              useLlamaGuard: activeDoc.agent.guardrails?.useLlamaGuard ?? false,
+                            },
+                          })
+                        }
+                        className="mt-0.5 accent-emerald-500 w-4 h-4 rounded cursor-pointer"
+                      />
+                      <label htmlFor="guard_prompt_injection" className="cursor-pointer space-y-1">
+                        <span className="block text-xs font-semibold text-slate-200">
+                          Prompt Injection Defense
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Blocks jailbreak instructions, prompt leaks, and unauthorized overrides.
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Guardrail 2: Destructive Tools & SSRF Defense */}
+                    <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="guard_destructive_tools"
+                        checked={activeDoc.agent.guardrails?.blockDestructiveTools ?? true}
+                        onChange={(e) =>
+                          updateAgent({
+                            guardrails: {
+                              enabled: true,
+                              blockPromptInjection: activeDoc.agent.guardrails?.blockPromptInjection ?? true,
+                              blockDestructiveTools: e.target.checked,
+                              blockSsrf: e.target.checked,
+                              maskSecrets: activeDoc.agent.guardrails?.maskSecrets ?? true,
+                              useLlamaGuard: activeDoc.agent.guardrails?.useLlamaGuard ?? false,
+                            },
+                          })
+                        }
+                        className="mt-0.5 accent-emerald-500 w-4 h-4 rounded cursor-pointer"
+                      />
+                      <label htmlFor="guard_destructive_tools" className="cursor-pointer space-y-1">
+                        <span className="block text-xs font-semibold text-slate-200">
+                          Tool Safety & SSRF Shield
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Blocks DROP TABLE, cloud metadata probes (169.254.169.254), and mass deletes.
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Guardrail 3: Secret Leak Masking */}
+                    <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-800 flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="guard_mask_secrets"
+                        checked={activeDoc.agent.guardrails?.maskSecrets ?? true}
+                        onChange={(e) =>
+                          updateAgent({
+                            guardrails: {
+                              enabled: true,
+                              blockPromptInjection: activeDoc.agent.guardrails?.blockPromptInjection ?? true,
+                              blockDestructiveTools: activeDoc.agent.guardrails?.blockDestructiveTools ?? true,
+                              blockSsrf: activeDoc.agent.guardrails?.blockSsrf ?? true,
+                              maskSecrets: e.target.checked,
+                              useLlamaGuard: activeDoc.agent.guardrails?.useLlamaGuard ?? false,
+                            },
+                          })
+                        }
+                        className="mt-0.5 accent-emerald-500 w-4 h-4 rounded cursor-pointer"
+                      />
+                      <label htmlFor="guard_mask_secrets" className="cursor-pointer space-y-1">
+                        <span className="block text-xs font-semibold text-slate-200">
+                          Credential & Secret Masking
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Redacts API keys, PATs, and credentials before returning final output.
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Output Format Selector */}
+                  <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <span className="text-slate-400 font-medium">Output Deterministic Format:</span>
+                    <div className="flex items-center gap-2">
+                      {(["markdown", "json", "text"] as const).map((fmt) => (
+                        <button
+                          key={fmt}
+                          type="button"
+                          onClick={() => updateAgent({ responseFormat: fmt })}
+                          className={`px-3 py-1 rounded-md text-xs font-medium uppercase transition-colors cursor-pointer ${
+                            (activeDoc.agent.responseFormat || "markdown") === fmt
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                              : "bg-slate-900 text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {fmt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
           {/* TAB 3: TIED OUTPUT ACTION CONFIGURATION */}
-          {activeTab === "output" && (
+          {activeRightTab === "config" && activeTab === "output" && (
             <div className="p-6 sm:p-8 space-y-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                 <div>
@@ -2828,6 +3886,81 @@ print(response.json())`}</pre>
                       </div>
                     </div>
                   )}
+
+                  {/* 5. AGENTMAIL EMAIL REPLY SETTINGS */}
+                  {activeDoc.output.targetTrigger === "agentmail" && (
+                    <div className="space-y-4">
+                      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Mail className="w-3.5 h-3.5 text-emerald-400" />
+                            AgentMail Threaded Reply Settings
+                          </h4>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                            agentmail.to
+                          </span>
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                          <label className="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={
+                                activeDoc.output.agentmailResponseConfig?.autoReply ?? true
+                              }
+                              onChange={(e) =>
+                                updateOutput({
+                                  agentmailResponseConfig: {
+                                    ...(activeDoc.output.agentmailResponseConfig || {
+                                      autoReply: true,
+                                      replyToThread: true,
+                                    }),
+                                    autoReply: e.target.checked,
+                                  },
+                                })
+                              }
+                              className="w-4 h-4 rounded border-slate-700 text-emerald-600 bg-slate-900 cursor-pointer"
+                            />
+                            <span className="text-slate-300">
+                              <strong className="text-white">Auto-Reply to Originating Email</strong>{" "}
+                              – Immediately sends an email reply once the agent finishes.
+                            </span>
+                          </label>
+
+                          <label className="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={
+                                activeDoc.output.agentmailResponseConfig?.replyToThread ?? true
+                              }
+                              onChange={(e) =>
+                                updateOutput({
+                                  agentmailResponseConfig: {
+                                    ...(activeDoc.output.agentmailResponseConfig || {
+                                      autoReply: true,
+                                      replyToThread: true,
+                                    }),
+                                    replyToThread: e.target.checked,
+                                  },
+                                })
+                              }
+                              className="w-4 h-4 rounded border-slate-700 text-emerald-600 bg-slate-900 cursor-pointer"
+                            />
+                            <span className="text-slate-300">
+                              <strong className="text-white">Maintain Conversation Threading</strong>{" "}
+                              – Retains the Thread-ID and In-Reply-To headers so replies group in the user's email client.
+                            </span>
+                          </label>
+
+                          <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-[11px] text-slate-300 mt-2">
+                            <p className="leading-relaxed">
+                              When an inbound email triggers this workflow, the agent's synthesized response will be formatted in clean HTML & Markdown and dispatched back via AgentMail to the sender's thread.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Right Column: Sample Result Receipt */}
@@ -2859,8 +3992,191 @@ print(response.json())`}</pre>
             </div>
           )}
 
+          {/* TAB: INTERACTIVE TEST & CHAT RUNNER */}
+          {activeRightTab === "chat" && (
+            <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-4xl mx-auto w-full">
+              {/* Chat Sub-header inside panel */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-slate-800/80 gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Bot className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-sm text-white">{activeDoc.name}</h3>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                        {activeDoc.agent.model.split("/").pop()}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Live testing directly against compiled workflow pipeline ({activeDoc.trigger.type} trigger)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[11px]">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Interactive Runner
+                  </span>
+                  <button
+                    onClick={() => openChatSidebar()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
+                    title="Expand to Full Height Slide-over Drawer"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span className="hidden sm:inline">Drawer Mode</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Message Stream */}
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-[360px]">
+                {chatMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 my-auto">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-3 text-emerald-400">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                    <h4 className="font-bold text-slate-200 text-sm mb-1">
+                      Ready to Test "{activeDoc.name}"
+                    </h4>
+                    <p className="text-xs text-slate-400 max-w-md mb-5 leading-relaxed">
+                      Send a test query to verify your agent's reasoning, tool execution, and tied outputs. Click a quick starter below:
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg">
+                      {[
+                        activeDoc.trigger.samplePayload?.message || "What product categories are available?",
+                        "What active tools do you have access to?",
+                        "Summarize your role and configuration",
+                        "Calculate a sample test problem",
+                      ].map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setTestChatInput(suggestion);
+                            sendWorkflowChatMessage(suggestion);
+                          }}
+                          className="p-3 text-left rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-xs text-slate-300 hover:text-white transition-all cursor-pointer group"
+                        >
+                          <span className="text-emerald-400 mr-2 group-hover:translate-x-0.5 inline-block transition-transform">→</span>
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {chatMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${
+                          msg.role === "user" ? "items-end" : "items-start"
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[88%] rounded-2xl p-4 text-xs sm:text-sm ${
+                            msg.role === "user"
+                              ? "bg-cyan-600/20 text-cyan-100 border border-cyan-500/30 rounded-br-none"
+                              : "bg-slate-900 text-slate-200 border border-slate-800 rounded-bl-none shadow-md"
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-mono text-slate-400">
+                            {msg.role === "user" ? (
+                              <span className="flex items-center gap-1 font-semibold text-cyan-300">
+                                <User className="w-3 h-3" />
+                                You
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                                <Bot className="w-3 h-3" />
+                                Agent
+                              </span>
+                            )}
+                            <span>•</span>
+                            <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            {msg.durationMs && (
+                              <>
+                                <span>•</span>
+                                <span className="text-emerald-400 font-mono">{msg.durationMs}ms</span>
+                              </>
+                            )}
+                          </div>
+
+                          {msg.role === "user" ? (
+                            <div className="whitespace-pre-wrap">{msg.content}</div>
+                          ) : (
+                            <div className="prose prose-invert prose-xs sm:prose-sm max-w-none">
+                              <MarkdownRenderer content={msg.content} />
+                            </div>
+                          )}
+
+                          {msg.toolsUsed && msg.toolsUsed.length > 0 && (
+                            <div className="mt-3 pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-slate-400">Tools:</span>
+                              {msg.toolsUsed.map((tool, ti) => (
+                                <span
+                                  key={ti}
+                                  className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                                >
+                                  {tool}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {isRunning && (
+                  <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 w-fit text-xs text-slate-400 animate-pulse">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                    <span>Agent is executing tools & synthesizing response...</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input Box */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!testChatInput.trim() || isRunning) return;
+                  const prompt = testChatInput.trim();
+                  setTestChatInput("");
+                  sendWorkflowChatMessage(prompt);
+                }}
+                className="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2 shrink-0"
+              >
+                <input
+                  type="text"
+                  placeholder="Type a test message or query for this agent... (Press Enter)"
+                  value={testChatInput}
+                  onChange={(e) => setTestChatInput(e.target.value)}
+                  disabled={isRunning}
+                  className="flex-1 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={!testChatInput.trim() || isRunning}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-slate-950 font-bold text-xs hover:brightness-110 disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  {isRunning ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <span>Send</span>
+                      <Send className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
+
           {/* TAB: EXECUTION & LOG STORAGE RETENTION POLICIES */}
-          {activeTab === "storage" && (
+          {(activeRightTab === "storage" || activeTab === "storage") && (
             <div className="p-6 sm:p-8 space-y-8">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -3220,7 +4536,7 @@ print(response.json())`}</pre>
           )}
 
           {/* TAB 4: LIVE LOGS & EXECUTION TRACE */}
-          {activeTab === "logs" && (
+          {(activeRightTab === "logs" || activeTab === "logs") && (
             <div className="p-6 sm:p-8 space-y-4 font-mono text-xs">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                 <div className="flex items-center gap-2">
@@ -3280,10 +4596,71 @@ print(response.json())`}</pre>
                         </div>
                       </div>
 
-                      {log.data && Object.keys(log.data).length > 0 && (
-                        <div className="p-2.5 rounded bg-slate-900/90 text-slate-300 text-[11px] overflow-x-auto">
-                          <pre>{JSON.stringify(log.data, null, 2)}</pre>
+                      {log.stage === "tool_call" && log.data?.executedTools ? (
+                        <div className="space-y-2 mt-2">
+                          {log.data.executedTools.map((t: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px] space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white font-mono">
+                                    {t.displayName || t.name}
+                                  </span>
+                                  {t.source === "mcp" ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                      MCP: {t.serverName || "server"}
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                      LOCAL
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[9px] font-mono ${
+                                      t.status === "error"
+                                        ? "bg-rose-500/20 text-rose-400"
+                                        : "bg-slate-800 text-slate-400"
+                                    }`}
+                                  >
+                                    {t.status || "success"}
+                                  </span>
+                                </div>
+
+                                {t.durationMs !== undefined && (
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    {t.durationMs}ms
+                                  </span>
+                                )}
+                              </div>
+
+                              {t.arguments && (
+                                <div className="text-[10px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-900 overflow-x-auto">
+                                  <span className="text-slate-500 uppercase font-semibold">Args: </span>
+                                  {typeof t.arguments === "object"
+                                    ? JSON.stringify(t.arguments)
+                                    : String(t.arguments)}
+                                </div>
+                              )}
+
+                              {t.result && (
+                                <div className="text-[10px] font-mono text-cyan-300/90 bg-slate-950 p-2 rounded border border-slate-900 overflow-x-auto max-h-32">
+                                  <span className="text-slate-500 uppercase font-semibold">Output: </span>
+                                  {typeof t.result === "object"
+                                    ? JSON.stringify(t.result, null, 2)
+                                    : String(t.result)}
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
+                      ) : (
+                        log.data && Object.keys(log.data).length > 0 && (
+                          <div className="p-2.5 rounded bg-slate-900/90 text-slate-300 text-[11px] overflow-x-auto mt-2">
+                            <pre>{JSON.stringify(log.data, null, 2)}</pre>
+                          </div>
+                        )
                       )}
                     </div>
                   ))}

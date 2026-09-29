@@ -1,12 +1,26 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   useAgentStore,
   AVAILABLE_TOOLS,
   ConfiguredTool,
   AvailableTool,
 } from "@/store/agentStore";
+
+function getToolDocsSlug(toolId: string): string {
+  const map: Record<string, string> = {
+    notion_page: "notion",
+    discord_webhook: "discord",
+    http_request: "node_http_request",
+    resend: "resend_email",
+    jina: "jina_reader",
+    forty_two_min: "42min",
+    seven_todos: "7todos",
+  };
+  return map[toolId] || toolId;
+}
 import {
   X,
   Play,
@@ -30,6 +44,14 @@ import {
   MessageSquare,
   ChevronDown,
   ArrowRight,
+  Megaphone,
+  Kanban,
+  Table,
+  Send,
+  CheckSquare,
+  Bot,
+  Clock,
+  ListTodo,
 } from "lucide-react";
 
 export const NOTION_RESOURCES = [
@@ -304,6 +326,22 @@ export function ToolConfigModal() {
         return <Search className="w-5 h-5 text-sky-400" />;
       case "MessageSquare":
         return <MessageSquare className="w-5 h-5 text-indigo-400" />;
+      case "Megaphone":
+        return <Megaphone className="w-5 h-5 text-fuchsia-400" />;
+      case "Kanban":
+        return <Kanban className="w-5 h-5 text-blue-400" />;
+      case "Table":
+        return <Table className="w-5 h-5 text-teal-400" />;
+      case "Send":
+        return <Send className="w-5 h-5 text-emerald-400" />;
+      case "CheckSquare":
+        return <CheckSquare className="w-5 h-5 text-violet-400" />;
+      case "Bot":
+        return <Bot className="w-5 h-5 text-orange-400" />;
+      case "Clock":
+        return <Clock className="w-5 h-5 text-yellow-400" />;
+      case "ListTodo":
+        return <ListTodo className="w-5 h-5 text-lime-400" />;
       default:
         return <Sparkles className="w-5 h-5 text-cyan-400" />;
     }
@@ -335,16 +373,49 @@ export function ToolConfigModal() {
             </div>
           </div>
 
-          <button
-            onClick={closeToolConfig}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/docs?slug=tools/${getToolDocsSlug(toolDef.id)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-500/30 text-cyan-300 text-xs font-semibold transition-all group"
+              title="Open documentation & API key guide"
+            >
+              <BookOpen className="w-3.5 h-3.5 group-hover:scale-110 transition-transform text-cyan-400" />
+              <span>Tool Docs</span>
+              <ExternalLink className="w-3 h-3 text-cyan-400/80" />
+            </Link>
+
+            <button
+              onClick={closeToolConfig}
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body: Scrollable Parameters (like n8n node parameters) */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Documentation Banner */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-cyan-950/20 border border-cyan-500/20 text-xs">
+            <div className="flex items-center gap-2 text-slate-300">
+              <BookOpen className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span>
+                Need setup instructions or an API key for <strong className="text-white">{toolDef.name}</strong>?
+              </span>
+            </div>
+            <Link
+              href={`/docs?slug=tools/${getToolDocsSlug(toolDef.id)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-cyan-400 hover:text-cyan-300 font-semibold underline underline-offset-2 flex items-center gap-1 shrink-0"
+            >
+              <span>View Setup & Credentials Guide</span>
+              <ExternalLink className="w-3 h-3" />
+            </Link>
+          </div>
+
           {/* Quick Info & Trigger Payload Variables */}
           <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2 text-slate-300">

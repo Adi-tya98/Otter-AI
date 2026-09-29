@@ -373,7 +373,7 @@ export default function DashboardPage() {
             ) : (
               <button
                 onClick={() => setIsCreateModalOpen(true)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-400 to-cyan-400 text-slate-950 text-xs font-bold rounded-xl hover:brightness-110 shadow-lg shadow-amber-500/20 transition-all"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-linear-to-r from-amber-400 to-cyan-400 text-slate-950 text-xs font-bold rounded-xl hover:brightness-110 shadow-lg shadow-amber-500/20 transition-all"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
                 <span>Create First Workflow</span>
@@ -487,7 +487,7 @@ export default function DashboardPage() {
                     </div>
 
                     <Link
-                      href={`/docs/${wf.id}`}
+                      href={`/${wf.id}`}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/40 hover:border-cyan-600 text-cyan-300 hover:text-white text-xs font-semibold transition-all group/btn"
                     >
                       <span>Open Studio</span>
@@ -515,7 +515,8 @@ export default function DashboardPage() {
               Create New Workflow
             </h2>
             <p className="text-xs text-slate-400 mb-5">
-              Initialize a new autonomous agent workflow stored in PostgreSQL with Chat interface enabled by default.
+              Initialize a new autonomous agent workflow stored in PostgreSQL
+              with Chat interface enabled by default.
             </p>
 
             <form onSubmit={handleCreateWorkflow} className="space-y-4">

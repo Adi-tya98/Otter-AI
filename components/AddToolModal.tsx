@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { useAgentStore, AvailableTool } from "@/store/agentStore";
 import {
   X,
@@ -18,7 +19,29 @@ import {
   Coins,
   Mail,
   MessageSquare,
+  ExternalLink,
+  Megaphone,
+  Kanban,
+  Table,
+  Send,
+  CheckSquare,
+  Bot,
+  Clock,
+  ListTodo,
 } from "lucide-react";
+
+function getToolDocsSlug(toolId: string): string {
+  const map: Record<string, string> = {
+    notion_page: "notion",
+    discord_webhook: "discord",
+    http_request: "node_http_request",
+    resend: "resend_email",
+    jina: "jina_reader",
+    forty_two_min: "42min",
+    seven_todos: "7todos",
+  };
+  return map[toolId] || toolId;
+}
 
 export function AddToolModal() {
   const {
@@ -41,9 +64,12 @@ export function AddToolModal() {
 
   const categories = [
     { id: "all", label: "All Tools" },
-    { id: "network", label: "Network & REST" },
-    { id: "utility", label: "Utility & Data" },
+    { id: "productivity", label: "Productivity & Tasks" },
+    { id: "marketing", label: "Marketing & Growth" },
+    { id: "database", label: "Databases & Storage" },
     { id: "communication", label: "Email & Communication" },
+    { id: "network", label: "Network & REST" },
+    { id: "utility", label: "Utility & Scraping" },
   ];
 
   const toolsList = availableTools && availableTools.length > 0 ? availableTools : [];
@@ -78,6 +104,22 @@ export function AddToolModal() {
         return <Search className="w-5 h-5 text-sky-400" />;
       case "MessageSquare":
         return <MessageSquare className="w-5 h-5 text-indigo-400" />;
+      case "Megaphone":
+        return <Megaphone className="w-5 h-5 text-fuchsia-400" />;
+      case "Kanban":
+        return <Kanban className="w-5 h-5 text-blue-400" />;
+      case "Table":
+        return <Table className="w-5 h-5 text-teal-400" />;
+      case "Send":
+        return <Send className="w-5 h-5 text-emerald-400" />;
+      case "CheckSquare":
+        return <CheckSquare className="w-5 h-5 text-violet-400" />;
+      case "Bot":
+        return <Bot className="w-5 h-5 text-orange-400" />;
+      case "Clock":
+        return <Clock className="w-5 h-5 text-yellow-400" />;
+      case "ListTodo":
+        return <ListTodo className="w-5 h-5 text-lime-400" />;
       default:
         return <Sparkles className="w-5 h-5 text-cyan-400" />;
     }
@@ -98,12 +140,26 @@ export function AddToolModal() {
             </p>
           </div>
 
-          <button
-            onClick={closeAddToolModal}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition-colors"
+              title="Open documentation portal"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Docs Catalog</span>
+              <ExternalLink className="w-3 h-3 text-cyan-400/80" />
+            </Link>
+
+            <button
+              onClick={closeAddToolModal}
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Search & Filter Bar */}
@@ -166,7 +222,16 @@ export function AddToolModal() {
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
-                <span className="text-[11px] text-cyan-400 font-mono">● Configurable</span>
+                <Link
+                  href={`/docs?slug=tools/${getToolDocsSlug(tool.id)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium underline underline-offset-2 flex items-center gap-1"
+                >
+                  <BookOpen className="w-3 h-3" />
+                  <span>Docs</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </Link>
                 <button
                   type="button"
                   onClick={() => addToolToAgent(tool.id)}

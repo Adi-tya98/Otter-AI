@@ -87,8 +87,22 @@ export function Navbar() {
 
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center gap-1 bg-slate-900/60 p-1.5 rounded-full border border-slate-800 text-sm font-medium text-slate-300 backdrop-blur-md">
+              <Link
+                href="/usecases"
+                className="px-3.5 py-1.5 rounded-full hover:text-white hover:bg-slate-800/80 transition-all flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Use Cases</span>
+              </Link>
+              <Link
+                href="/docs"
+                className="px-3.5 py-1.5 rounded-full hover:text-white hover:bg-slate-800/80 transition-all flex items-center gap-1.5"
+              >
+                <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <span>Docs</span>
+              </Link>
               <a
-                href="#pricing"
+                href="/#pricing"
                 className="px-3.5 py-1.5 rounded-full hover:text-white hover:bg-slate-800/80 transition-all"
               >
                 Pricing
@@ -263,8 +277,26 @@ export function Navbar() {
                 Workflows Dashboard
               </Link>
 
+              <Link
+                href="/usecases"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 text-sm text-cyan-300 font-semibold hover:bg-slate-800/80 rounded-lg flex items-center gap-2"
+              >
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                Use Cases
+              </Link>
+
+              <Link
+                href="/docs"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 text-sm text-purple-300 font-semibold hover:bg-slate-800/80 rounded-lg flex items-center gap-2"
+              >
+                <Layers className="w-4 h-4 text-purple-400" />
+                Documentation
+              </Link>
+
               <a
-                href="#pricing"
+                href="/#pricing"
                 onClick={() => setMobileMenuOpen(false)}
                 className="px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/80 rounded-lg"
               >

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { OtterLogo } from "./OtterLogo";
 import { GithubIcon, TwitterIcon, DiscordIcon } from "./SocialIcons";
 
@@ -56,6 +57,11 @@ export function Footer() {
                 <a href="#demo" className="hover:text-white transition-colors">
                   Interactive Sandbox
                 </a>
+              </li>
+              <li>
+                <Link href="/usecases" className="hover:text-white transition-colors">
+                  Enterprise Use Cases
+                </Link>
               </li>
               <li>
                 <a href="#simplicity" className="hover:text-white transition-colors">

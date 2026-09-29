@@ -228,6 +228,61 @@ function convertTool(tool: ConfiguredTool, agentId: string, index: number): Back
     };
   }
 
+  // AgentMail Tool
+  if (tool.toolId === "agentmail") {
+    return {
+      type: "agentmail",
+      name: sanitizedName,
+      config: {
+        api_key: tool.config?.api_key || tool.config?.apiKey || null,
+        inbox_id: tool.config?.inbox_id || tool.config?.inboxId || null,
+        operation: tool.config?.operation || "send_message",
+        default_user_email: tool.config?.default_user_email || tool.config?.defaultUserEmail || null,
+        tool_desc:
+          tool.config?.tool_desc ||
+          tool.name ||
+          "Send emails, reply to active threads, inspect received messages, and manage inboxes using AgentMail (agentmail.to).",
+      },
+    };
+  }
+
+  // Supermetrics Marketing Tool
+  if (tool.toolId === "supermetrics") {
+    return {
+      type: "supermetrics",
+      name: sanitizedName,
+      config: {
+        api_key: tool.config?.api_key || tool.config?.apiKey || null,
+        ds_id: tool.config?.ds_id || tool.config?.dsId || "AW",
+        operation: tool.config?.operation || "run_query",
+        date_range_type: tool.config?.date_range_type || tool.config?.dateRangeType || "last_30_days",
+        tool_desc:
+          tool.config?.tool_desc ||
+          tool.name ||
+          "Access cross-channel marketing data across 100+ sources (Google Ads, Meta, LinkedIn, GA4, TikTok, Bing). Discover sources, explore metrics, and run queries.",
+      },
+    };
+  }
+
+  // MongoDB & Atlas Tool
+  if (tool.toolId === "mongodb") {
+    return {
+      type: "mongodb",
+      name: sanitizedName,
+      config: {
+        connection_string: tool.config?.connection_string || tool.config?.connectionString || null,
+        database: tool.config?.database || "test",
+        collection: tool.config?.collection || null,
+        operation: tool.config?.operation || "find",
+        atlas_project_id: tool.config?.atlas_project_id || tool.config?.atlasProjectId || null,
+        tool_desc:
+          tool.config?.tool_desc ||
+          tool.name ||
+          "Interact with MongoDB databases and MongoDB Atlas clusters. Query collections with find/aggregate, mutate documents, and inspect Atlas clusters.",
+      },
+    };
+  }
+
   // Fallback for custom or unknown tools:
   // Gracefully adapt them to an HTTP Request so the backend compiles without error
   return {
@@ -263,8 +318,21 @@ export function agentDocumentToBackendWorkflow(doc: AgentDocument): BackendWorkf
       system_prompt:
         doc.agent.systemPrompt ||
         "You are an Otter AI automation agent. Examine the incoming user request, call available tools when appropriate, and synthesize a clear result.",
+      mcp_servers: doc.agent.mcpServers || [],
+      deterministic: doc.agent.deterministic ?? true,
+      seed: doc.agent.seed ?? 42,
+      response_format: doc.agent.responseFormat || "markdown",
+      guardrails: doc.agent.guardrails || {
+        enabled: true,
+        block_prompt_injection: true,
+        block_destructive_tools: true,
+        block_ssrf: true,
+        mask_secrets: true,
+        use_llama_guard: false,
+      },
     },
     tool: activeTools,
+    mcp_servers: doc.agent.mcpServers || [],
   };
 
   return {
@@ -301,6 +369,12 @@ export function extractTriggerInput(doc: AgentDocument, customInput?: string): s
 
   if (payload.event && typeof payload.event === "string") {
     return `Event received: ${payload.event} for customer ${payload.customer_email || payload.user_id || "default"}`;
+  }
+
+  if (payload.body && typeof payload.body === "string") {
+    const sender = payload.from ? `${payload.sender_name || ''} <${payload.from}>`.trim() : "Unknown Sender";
+    const subject = payload.subject || "No Subject";
+    return `Inbound Email from ${sender}\nSubject: ${subject}\n\n${payload.body}`;
   }
 
   return JSON.stringify(payload);
@@ -357,10 +431,15 @@ export function backendExecutionToLogs(
         timestamp,
         status: "success",
         durationMs: Math.floor(durationMs * 0.4),
-        summary: `Backend Tools Invoked (${agentOutput.tools_used.length} calls): ${agentOutput.tools_used.map((t) => t.name).join(", ")}`,
+        summary: `Backend Tools Invoked (${agentOutput.tools_used.length} calls): ${agentOutput.tools_used.map((t: any) => t.display_name || t.name).join(", ")}`,
         data: {
-          executedTools: agentOutput.tools_used.map((t) => ({
+          executedTools: agentOutput.tools_used.map((t: any) => ({
             name: t.name,
+            displayName: t.display_name || t.name,
+            source: t.source || "local",
+            serverName: t.server_name,
+            status: t.status || "success",
+            durationMs: t.duration_ms,
             arguments: t.args,
             result: t.result,
           })),
@@ -485,6 +564,7 @@ export function backendWorkflowToAgentDocument(backendWf: any): AgentDocument {
       temperature: agentNode?.config?.temperature ?? 0.2,
       reasoningMode: "fast",
       tools,
+      mcpServers: agentNode?.config?.mcp_servers || agentNode?.mcp_servers || [],
       responseFormat: "markdown",
       sampleOutput: {
         status: "Success",

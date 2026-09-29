@@ -12,8 +12,15 @@ export interface BackendWorkflowNode {
     temperature: number;
     max_iterations?: number;
     system_prompt: string;
+    mcp_servers?: any[];
+    deterministic?: boolean;
+    seed?: number;
+    response_format?: string;
+    guardrails?: Record<string, any>;
+    [key: string]: any;
   };
   tool?: BackendToolDef[];
+  mcp_servers?: any[];
 }
 
 export interface BackendEdge {
@@ -585,6 +592,99 @@ export async function simulateTelegramTrigger(
   return res.json();
 }
 
+/**
+ * Register AgentMail Webhook on backend.
+ */
+export async function startAgentMailTrigger(
+  config: {
+    workflow_id: string;
+    inbox_id?: string;
+    inbox_email?: string;
+    api_key?: string;
+    webhook_secret?: string;
+    webhook_base_url?: string;
+    auto_reply?: boolean;
+  },
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{ success: boolean; status: string; workflow_id: string; webhook_url?: string }> {
+  const res = await fetch(`${backendUrl}/api/v1/triggers/agentmail/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to start AgentMail trigger: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Deactivate AgentMail trigger on backend.
+ */
+export async function stopAgentMailTrigger(
+  workflowId: string,
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{ success: boolean; workflow_id: string; status: string }> {
+  const res = await fetch(`${backendUrl}/api/v1/triggers/agentmail/stop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow_id: workflowId }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to stop AgentMail trigger: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Get AgentMail trigger status.
+ */
+export async function getAgentMailTriggerStatus(
+  workflowId: string,
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{
+  workflow_id: string;
+  status: string;
+  is_active: boolean;
+  webhook_url?: string;
+  inbox_email?: string;
+  inbox_id?: string;
+  messages_processed: number;
+}> {
+  const res = await fetch(`${backendUrl}/api/v1/triggers/agentmail/status/${workflowId}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to get AgentMail trigger status: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Simulate an inbound email arrival via AgentMail.
+ */
+export async function simulateAgentMailTrigger(
+  workflowId: string,
+  sender: string = "sarah.chen@enterprise.io",
+  subject: string = "Enterprise SLA Inquiry",
+  body: string = "Hi! Can you confirm our active plan and response SLA?",
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{ success: boolean; workflow_id: string; sender: string; subject: string; agent_response: string }> {
+  const res = await fetch(`${backendUrl}/api/v1/triggers/agentmail/simulate/${workflowId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sender,
+      subject,
+      body,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to simulate AgentMail email: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // ============================================================================
 // 🚀 WORKFLOW DEPLOYMENT & PUBLIC AGENT INTERACTION APIS
 // ============================================================================
@@ -596,7 +696,7 @@ export interface DeploymentInfo {
   description?: string;
   status: "active" | "paused" | "inactive";
   is_active?: boolean;
-  trigger_type: "chat" | "webhook" | "discord" | "telegram";
+  trigger_type: "chat" | "webhook" | "discord" | "telegram" | "agentmail";
   shareable_url?: string;
   webhook_url?: string;
   api_key?: string;
@@ -792,5 +892,125 @@ export async function clearWorkflowExecutions(
   return res.json();
 }
 
+export interface MCPDiscoverPayload {
+  server_id?: string;
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  url?: string;
+  headers?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeout?: number;
+}
 
+export interface MCPDiscoverResponse {
+  status: string;
+  server_name: string;
+  transport: string;
+  tool_count: number;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, any>;
+  }>;
+  latency_ms: number;
+  message: string;
+}
 
+/**
+ * Test connection and discover tools from an MCP server via backend.
+ */
+export async function discoverMcpToolsApi(
+  payload: MCPDiscoverPayload,
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<MCPDiscoverResponse> {
+  const res = await fetch(`${backendUrl}/api/v1/mcp/discover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to discover MCP tools: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Test direct execution of an MCP tool via backend.
+ */
+export async function callMcpToolApi(
+  payload: {
+    server_id?: string;
+    name: string;
+    transport: string;
+    url?: string;
+    headers?: Record<string, string>;
+    command?: string;
+    args?: string[];
+    tool_name: string;
+    arguments?: Record<string, any>;
+  },
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{ status: string; tool_name: string; result: any; latency_ms: number }> {
+  const res = await fetch(`${backendUrl}/api/v1/mcp/call`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to call MCP tool: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Docs API Client: Fetch full documentation navigation tree
+ */
+export async function fetchDocsNavigation(
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{ categories: any[]; total_tools: number; total_guides: number }> {
+  const res = await fetch(`${backendUrl}/api/v1/docs`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch docs navigation: HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.data;
+}
+
+/**
+ * Docs API Client: Fetch single document page content by slug
+ */
+export async function fetchDocContent(
+  slug: string,
+  backendUrl: string = DEFAULT_BACKEND_URL,
+): Promise<{
+  status: string;
+  type: "guide" | "tool";
+  slug: string;
+  tool_id?: string;
+  title: string;
+  category: string;
+  badge?: string;
+  icon?: string;
+  description?: string;
+  content_markdown: string;
+  parameters_schema?: any[];
+  operations?: any[];
+  sample_output?: any;
+}> {
+  const cleanSlug = slug.replace(/^\/+/, "");
+  const res = await fetch(`${backendUrl}/api/v1/docs/${cleanSlug}`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Failed to fetch document: HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.data;
+}
